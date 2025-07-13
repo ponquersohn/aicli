@@ -1,6 +1,7 @@
 """Interactive REPL interface for AICLI."""
 
 import sys
+import readline
 from typing import Optional, List
 from rich.console import Console
 from rich.prompt import Prompt
@@ -27,6 +28,7 @@ class InteractiveInterface:
         self.agent = AIAgent(config)
         self.session_active = True
         self.command_history: List[str] = []
+        self._setup_readline()
         
     def run(self):
         """Start the interactive REPL."""
@@ -61,18 +63,50 @@ class InteractiveInterface:
         except KeyboardInterrupt:
             self.console.print("\n[dim]Use /exit to quit[/dim]")
     
+    def _setup_readline(self):
+        """Configure readline for command history and navigation."""
+        # Enable history
+        readline.parse_and_bind("tab: complete")
+        readline.parse_and_bind("set show-all-if-ambiguous on")
+        readline.parse_and_bind("set completion-ignore-case on")
+        
+        # Set up history
+        readline.set_history_length(1000)
+        
+        # Load history from previous sessions if it exists
+        try:
+            readline.read_history_file(".aicli_history")
+        except FileNotFoundError:
+            pass
+    
     def _get_user_input(self) -> str:
-        """Get user input with a beautiful prompt."""
+        """Get user input with a beautiful prompt and full navigation support."""
+        # Display the prompt using Rich
         prompt_text = Text()
         prompt_text.append("💬 ", style="bright_cyan")
         prompt_text.append("You", style="bright_white bold")
         prompt_text.append(" › ", style="bright_cyan")
         
-        return Prompt.ask(
-            prompt_text,
-            console=self.console,
-            show_default=False
-        )
+        # Print the prompt without newline
+        self.console.print(prompt_text, end="")
+        
+        try:
+            # Use input() with readline support for full navigation
+            user_input = input()
+            
+            # Add to readline history if not empty
+            if user_input.strip():
+                readline.add_history(user_input)
+                # Save history to file
+                try:
+                    readline.write_history_file(".aicli_history")
+                except:
+                    pass
+            
+            return user_input
+        except (EOFError, KeyboardInterrupt):
+            print()  # Print newline for clean exit
+            raise
     
     def _show_ai_response(self, user_input: str):
         """Show AI response with beautiful formatting."""
@@ -91,8 +125,10 @@ class InteractiveInterface:
                 # Get AI response
                 response = self.agent.execute(user_input)
                 
-        # Display AI response
-        self._display_response(response)
+                # Display AI response
+                self._display_response(response)
+            except Exception as e:
+                self.console.print(f"[red]Error: {e}[/red]")
     
     def _display_response(self, response: str):
         """Display AI response with beautiful formatting."""

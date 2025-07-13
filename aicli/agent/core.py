@@ -1,11 +1,12 @@
 """Core AI agent implementation using LangChain."""
 
 from typing import Optional, Dict, Any, List
-from langchain.agents import AgentExecutor, create_structured_chat_agent
+from langchain.agents import AgentExecutor, create_react_agent
 from langchain.memory import ConversationBufferMemory
 from langchain.schema import HumanMessage, AIMessage
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
 from langchain_core.tools import Tool
+from langchain import hub
 
 from ..llm.factory import LLMFactory
 from ..utils.config import Config
@@ -28,34 +29,48 @@ class AIAgent:
     
     def _create_agent(self) -> AgentExecutor:
         """Create the LangChain agent executor."""
-        # Create system prompt
-        system_prompt = self._create_system_prompt()
+        # Use a simpler ReAct agent with proper prompt format
+        try:
+            # Try to get ReAct prompt from hub
+            prompt = hub.pull("hwchase17/react")
+        except:
+            # Fallback to manual prompt creation
+            prompt = PromptTemplate.from_template("""Answer the following questions as best you can. You have access to the following tools:
+
+{tools}
+
+Use the following format:
+
+Question: the input question you must answer
+Thought: you should always think about what to do
+Action: the action to take, should be one of [{tool_names}]
+Action Input: the input to the action
+Observation: the result of the action
+... (this Thought/Action/Action Input/Observation can repeat N times)
+Thought: I now know the final answer
+Final Answer: the final answer to the original input question
+
+Begin!
+
+Question: {input}
+Thought:{agent_scratchpad}""")
         
-        # Create prompt template
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            ("placeholder", "{chat_history}"),
-            ("human", "{input}"),
-            ("placeholder", "{agent_scratchpad}"),
-        ])
-        
-        # Create structured chat agent
-        agent = create_structured_chat_agent(
+        # Create ReAct agent
+        agent = create_react_agent(
             llm=self.llm,
             tools=self.tools,
             prompt=prompt
         )
         
-        # Create agent executor
+        # Create agent executor without memory for now (to avoid conflicts)
         return AgentExecutor(
             agent=agent,
             tools=self.tools,
-            memory=self.memory,
             verbose=self.config.logging.level == "DEBUG",
             return_intermediate_steps=True,
             handle_parsing_errors=True,
-            max_iterations=10,
-            max_execution_time=60,
+            max_iterations=5,
+            max_execution_time=30,
         )
     
     def _create_system_prompt(self) -> str:
@@ -80,12 +95,40 @@ Guidelines:
 6. Be concise but thorough
 7. Focus on best practices and clean code
 
-Available tools allow you to:
-- Read and analyze project files
-- Execute Python code safely
-- Run git commands
-- Search through codebases
-- Preview file changes
+You have access to the following tools:
+{tools}
+
+Use a json blob to specify a tool by providing an action key (tool name) and an action_input key (tool input).
+
+Valid "action" values: "Final Answer" or {tool_names}
+
+Provide only ONE action per $JSON_BLOB, as shown:
+
+```
+{{
+  "action": $TOOL_NAME,
+  "action_input": $INPUT
+}}
+```
+
+Follow this format:
+
+Question: input question to answer
+Thought: consider previous and subsequent steps
+Action:
+```
+$JSON_BLOB
+```
+Observation: action result
+... (Thought/Action/Observation can repeat N times)
+Thought: I know what to respond
+Action:
+```
+{{
+  "action": "Final Answer",
+  "action_input": "Final response to human"
+}}
+```
 
 Always consider the project context and existing code patterns when making suggestions.
 Prioritize security and maintainability in your recommendations."""
